@@ -33,7 +33,7 @@
             classyplate.source = inputs.classyplate;
           };
         };
-        packages.default =  self'.packages.fdep;
+        packages.default =  self'.packages.logerr;
       };
     };
 }

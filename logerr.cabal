@@ -1,8 +1,7 @@
 cabal-version:      3.0
-name:               fdep
+name:               logerr
 version:            0.1.0.0
-synopsis:
-    A plugin to dump out function dependancy graph of whole package
+synopsis:           A plugin to throw error when a stringified object is being passed in text error
 license:            MIT
 license-file:       LICENSE
 author:             eswar2001
@@ -34,7 +33,10 @@ common common-options
 
 library
     import:              common-options
-    exposed-modules:  Fdep.Plugin
+    exposed-modules:  Logerr.Plugin
+    other-modules: 
+        Logerr.Types
+        Logerr.Group
     build-depends:
                 bytestring
                 , containers
@@ -47,10 +49,12 @@ library
                 , classyplate
                 , aeson
                 , directory
+                , extra
+                , aeson-pretty
     hs-source-dirs:   src
     default-language: Haskell2010
 
-executable fdep
+executable logerr
     import:           common-options
     main-is:          Main.hs
     build-depends:
@@ -61,11 +65,11 @@ executable fdep
         , containers
         , extra
         , aeson-pretty
-        , fdep
+        , logerr
     hs-source-dirs:   app
     default-language: Haskell2010
 
-test-suite fdep-test
+test-suite logerr-test
     import:           common-options
 
     default-language: Haskell2010
@@ -74,7 +78,15 @@ test-suite fdep-test
     hs-source-dirs:   test
 
     main-is:          Main.hs
+    other-modules:
+        Test1
 
     build-depends:
-        fdep
-    ghc-options: -fplugin=Fdep.Plugin
+        , logerr
+        , aeson
+        , text
+        , containers
+        , bytestring
+        , aeson-pretty
+        , extra
+    ghc-options: -fplugin=Logerr.Plugin -fforce-recomp -dumpdir=test/dumps -ddump-to-file  -ddump-parsed-ast  -ddump-tc-ast
