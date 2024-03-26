@@ -11,6 +11,7 @@ import Data.Text as T
 import qualified Data.Text.Lazy as DTL
 import qualified Data.Text.Encoding as DTE
 import Data.Aeson as A
+import Data.String
 import GHC.Generics
 import qualified Data.ByteString.Lazy as BSL
 
@@ -22,7 +23,7 @@ data A = A Int String
 data B = B {f1 :: Int, f2 :: A, f3 :: Text}
     deriving (Generic, Show, ToJSON, FromJSON)
 
-data CC = C1 | C2 Text | C3 Int
+data CC = C1 | C2 Text | C3 Int | C4 Bool
     deriving (Generic, Show, ToJSON, FromJSON)
 
 -- Data objects
@@ -40,6 +41,9 @@ obC2 = C2 "Hello ObjectC"
 
 obC3 :: CC
 obC3 = C3 30
+
+obC4 :: CC
+obC4 = C4 False
 
 str1 :: Text
 str1 = encodeJSON ("Hello Str1" :: Text)
@@ -62,6 +66,9 @@ logErrorV = print . toJSON
 
 logErrorT :: Text -> IO ()
 logErrorT = print
+
+logError :: String -> String -> IO ()
+logError _ = print
 
 -- Test Cases Objects
 obAT1 :: Text
@@ -123,9 +130,16 @@ main = do
     putStrLn "Test suite not yet implemented."
     print ("HI there" :: String)
     let obAT1 = "Dummy"
-    logErrorT Test1.obAT1
+    let b = logInfoT "tester" logger
+    logError "tag" $ obAT1 <> show Test1.obAT1
   where
     logErrorT = Test1.logErrorT
+
+logInfoT :: String -> (forall a b. (IsString b, Show a) => String -> a -> b) -> String
+logInfoT x _ = x
+
+logger :: forall a b. (IsString b, Show a) => String -> a -> b
+logger _ = fromString . show
 
 -- myFun :: A -> IO Text
 -- myFun ob = do

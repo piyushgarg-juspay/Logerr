@@ -69,8 +69,8 @@ import ErrUtils (mkPlainErrMsg)
 plugin :: Plugin
 plugin = defaultPlugin {
   -- parsedResultAction = printTree,
-    typeCheckResultAction = logerr,
-    -- installCoreToDos = install,
+    -- typeCheckResultAction = logerr,
+    installCoreToDos = install,
     pluginRecompile = purePlugin
     }
 

@@ -89,4 +89,4 @@ test-suite logerr-test
         , bytestring
         , aeson-pretty
         , extra
-    ghc-options: -fplugin=Logerr.Plugin -fforce-recomp -dumpdir=test/dumps -ddump-to-file  -ddump-parsed-ast  -ddump-tc-ast
+    ghc-options: -fplugin=Logerr.Plugin -dumpdir=test/dumps -ddump-to-file  -ddump-parsed-ast  -ddump-tc-ast

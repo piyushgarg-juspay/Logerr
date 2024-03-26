@@ -38,9 +38,9 @@ import HscTypes (ModSummary (..))
 import Name (nameStableString)
 import Plugins (CommandLineOption, Plugin (typeCheckResultAction), defaultPlugin)
 import TcRnTypes (TcGblEnv (..), TcM)
-import Prelude hiding (id,writeFile)
+import Prelude hiding (id,writeFile, appendFile)
 import Data.Aeson
-import Data.ByteString.Lazy (writeFile)
+import Data.ByteString.Lazy (writeFile, appendFile)
 import System.Directory (createDirectoryIfMissing,getHomeDirectory)
 import Data.Maybe (fromMaybe)
 import Control.Exception (try,SomeException)
@@ -71,7 +71,19 @@ import TcRnMonad (failWith, addErr, addErrAt, addErrs)
 import Name (isSystemName)
 import GHC (OverLitTc(..), HsOverLit(..))
 import Control.Applicative ((<|>))
-import Type (Type, isFunTy, funResultTy, splitAppTys, dropForAlls)
+import Type (isFunTy, funResultTy, splitAppTys, dropForAlls)
+import TyCoRep (Type(..))
+import Data.ByteString.Lazy as BSL ()
+import Data.String (fromString)
+import TcType
+import TysWiredIn
+import GHC.Hs.Lit (HsLit(..))
+
+logDebugInfo :: Bool
+logDebugInfo = True
+
+throwCompilationError :: Bool
+throwCompilationError = False
 
 plugin :: Plugin
 plugin = defaultPlugin {
@@ -84,39 +96,68 @@ purePlugin _ = return NoForceRecompile
 
 logerr :: [CommandLineOption] -> ModSummary -> TcGblEnv -> TcM TcGblEnv
 logerr opts modSummary tcEnv = do
-  liftIO $ forkIO $ do
-      let prefixPath = case opts of
-                            []    -> "test/output"
-                            local : _ -> local
-          moduleName' = moduleNameString $ moduleName $ ms_mod modSummary
-          modulePath = prefixPath <> ms_hspp_file modSummary
-      depsMapList <- mapM loopOverLHsBindLR $ bagToList $ tcg_binds tcEnv
-      let path = (intercalate "/" . reverse . tail . reverse . splitOn "/") modulePath
-      print ("generated dependancy for module: " <> moduleName' <> " at path: " <> path)
-      createDirectoryIfMissing True path
-      writeFile ((modulePath) <> ".json") (encodePretty $ concat depsMapList)
+  let prefixPath = case opts of
+                        []    -> "test/output"
+                        local : _ -> local
+      moduleName' = moduleNameString $ moduleName $ ms_mod modSummary
+      modulePath = prefixPath <> ms_hspp_file modSummary
+  -- liftIO $ forkIO $ do
+      -- depsMapList <- mapM loopOverLHsBindLR $ bagToList $ tcg_binds tcEnv
+      -- let path = (intercalate "/" . reverse . tail . reverse . splitOn "/") modulePath
+      -- print ("generated dependancy for module: " <> moduleName' <> " at path: " <> path)
+      -- createDirectoryIfMissing True path
+      -- writeFile ((modulePath) <> ".json") (encodePretty $ concat depsMapList)
 
   errors <- concat <$> (mapM loopOverModBinds $ bagToList $ tcg_binds tcEnv)
-  if length errors > 0
-    then liftIO $ print ("More than 0 errors: " <> show errors)
-    else liftIO $ print "No errors"
-  addErrs $ map mkCompileError errors
-
+  -- if length errors > 0
+    -- then liftIO $ print ("More than 0 errors: " <> show errors)
+    -- else liftIO $ print "No errors"
+  if throwCompilationError
+    then addErrs $ map mkGhcCompileError errors
+    else pure ()
+  addErrToFile modSummary errors  
 
   return tcEnv
 
 --------------------------- Core Logic Hardcoded Data ---------------------------
 badPracticeRules :: Rules
-badPracticeRules = [logRule]
+badPracticeRules = [
+    defaultRule
+  , logRule1 
+  , logRule2 
+  , logRule3 
+  , logRule4 
+  , logRule5 
+  , logRule6
+  -- , showRule
+  ]
 
-logRule :: Rule
-logRule = Rule "$main$Test1$logErrorT" 1 stringifierFns [] textTypesToCheck
+logArgNo :: ArgNo
+logArgNo = 2
+
+logRule1 :: Rule
+logRule1 = Rule "LogRule" "logErrorT" logArgNo stringifierFns [] textTypesToCheck
+
+logRule2 :: Rule
+logRule2 = Rule "LogRule" "logErrorV" logArgNo stringifierFns [] textTypesToCheck
+
+logRule3 :: Rule
+logRule3 = Rule "LogRule" "logInfoT" logArgNo stringifierFns [] textTypesToCheck
+
+logRule4 :: Rule
+logRule4 = Rule "LogRule" "logInfoV" logArgNo stringifierFns [] textTypesToCheck
+
+logRule5 :: Rule
+logRule5 = Rule "LogRule" "logInfo" logArgNo stringifierFns [] textTypesToCheck
+
+logRule6 :: Rule
+logRule6 = Rule "LogRule" "logError" logArgNo stringifierFns [] textTypesToCheck
 
 showRule :: Rule
-showRule = Rule "$base$GHC.Show$show" 1 stringifierFns textTypesBlocked textTypesToCheck
+showRule = Rule "ShowRule" "show" 1 stringifierFns textTypesBlocked textTypesToCheck
 
 noUseRule :: Rule
-noUseRule = Rule "$text-1.2.4.1$Data.Text.Encoding$decodeUtf8" 0 [] [] []
+noUseRule = Rule "NoDecodeUtf8Rule" "$text-1.2.4.1$Data.Text.Encoding$decodeUtf8" 0 [] [] []
 
 stringifierFns :: FnsBlockedInArg
 stringifierFns = ["show", "encode", "encodeJSON"]
@@ -141,11 +182,11 @@ textTypesToCheck = ["Text", "String", "Char", "[Char]"]
 -- 8. Check if arg uses top level binding from any module. If yes, then check if that binding has any stringification output
 
 -- Loop over top level function binds
-loopOverModBinds :: LHsBindLR GhcTc GhcTc -> TcM [LogggingError]
+loopOverModBinds :: LHsBindLR GhcTc GhcTc -> TcM [CompileError]
 loopOverModBinds (L _ ap@(FunBind _ id matches _ _)) = do
   -- liftIO $ print "FunBinds" >> showOutputable ap
   calls <- getBadFnCalls ap
-  mapM mkLoggingError calls
+  mapM mkCompileError calls
 loopOverModBinds (L _ ap@(PatBind _ _ pat_rhs _)) = do
   -- liftIO $ print "PatBinds" >> showOutputable ap
   pure []
@@ -177,6 +218,9 @@ getLoggerFnCall _ = pure []
 isBadFunApp :: LHsExpr GhcTc -> TcM (Maybe (LHsExpr GhcTc, Violation))
 isBadFunApp ap@(L _ (HsVar _ v)) = isBadFunAppHelper ap
 isBadFunApp ap@(L _ (HsApp _ funl funr)) = isBadFunAppHelper ap
+-- **** Not adding these because of biplateRef ****
+-- isBadFunApp ap@(L loc (HsWrap _ expr)) = isBadFunApp (L loc expr)
+-- isBadFunApp ap@(L _ (Hspar _ expr)) = isBadFunApp expr
 isBadFunApp (L _ (OpApp _ lfun op rfun)) = do
   case showS op of
     "($)" -> isBadFunAppHelper $ mkHsApp lfun rfun
@@ -186,13 +230,14 @@ isBadFunApp _ = pure Nothing
 isBadFunAppHelper :: LHsExpr GhcTc -> TcM (Maybe (LHsExpr GhcTc, Violation))
 isBadFunAppHelper ap = do
   let res = getFnNameWithAllArgs ap
-  let (fnName, args) = maybe ("NA", []) (\(x, y) -> ((nameStableString . varName . unLoc) x, y)) $ res
+  -- let (fnName, args) = maybe ("NA", []) (\(x, y) -> ((nameStableString . varName . unLoc) x, y)) $ res
+  let (fnName, args) = maybe ("NA", []) (\(x, y) -> ((getOccString . varName . unLoc) x, y)) $ res
       rule = fromMaybe defaultRule $ (\x -> fnName == fn_name x) `find` badPracticeRules
-  if fnName /= "NA"
-    then liftIO $ do
-      print $ (fnName, map showS args)
-      print $ rule
-    else pure ()
+  -- if logDebugInfo && fnName /= "NA"
+  --   then liftIO $ do
+  --     print $ (fnName, map showS args)
+  --     print $ rule
+  --   else pure ()
   if rule == defaultRule
     then pure Nothing
   else if (arg_no rule) == 0 -- considering arg 0 as the case for blocking the whole function occurence
@@ -203,15 +248,21 @@ isBadFunAppHelper ap = do
       then pure Nothing
     else do
       let arg = head matches
-          argTypes = (map showS $ getArgType arg)
+          argTypes = (map showS $ getArgTypeWrapper arg)
           argTypeBlocked = fromMaybe "NA" $ (`elem` types_blocked_in_arg rule) `find` argTypes
           isArgTypeToCheck = (`elem` types_to_check_in_arg rule) `any` argTypes 
-      liftIO $ do
-        putStr "Arg Types = "
-        let vars = filter (not . isSystemName . varName) $ arg ^? biplateRef
-            tys = map (showS . idType) vars
-        print $ tys
-        print $ argTypes
+      if logDebugInfo && fnName /= "NA" then
+        liftIO $ do
+          print $ (fnName, map showS args)
+          print $ (fnName, showS arg)
+          print $ rule
+          putStr "Arg Types = "
+          let vars = filter (not . isSystemName . varName) $ arg ^? biplateRef
+              tys = map (showS . idType) vars
+          print $ map showS vars
+          print $ tys
+          print $ argTypes
+      else pure ()
       if argTypeBlocked /= "NA"
         then pure $ Just (ap, ArgTypeBlocked argTypeBlocked rule)
       else if not isArgTypeToCheck
@@ -219,21 +270,9 @@ isBadFunAppHelper ap = do
       else do
         -- It's a rule function with to_be_checked type argument
         -- stringificationFns1 <- getStringificationFns arg -- check if the expression has any stringification function
-        let blockedFnsList = getBlockedFnsList arg rule-- check if the expression has any stringification function
+        let blockedFnsList = getBlockedFnsList arg rule -- check if the expression has any stringification function
             vars = filter (not . isSystemName . varName) $ arg ^? biplateRef
             tys = map (map showS . (getReturnType . dropForAlls . idType)) vars
-        -- liftIO $ putStr "FnType = "
-        -- liftIO $ print $ map showS $ (getReturnType . dropForAlls . idType . unLoc) $ maybe (error "") fst res
-        -- liftIO $ putStr "StringificationFns = "
-        -- liftIO $ print $ blockedFnsList
-        -- liftIO $ putStr "StringificationFns1 = "
-        -- liftIO $ print $ stringificationFns1
-        -- liftIO $ putStr "Arg = "
-        -- liftIO $ print $ map (nameStableString . varName) vars
-        -- liftIO $ putStr "Arg type original = "
-        -- liftIO $ print $ map (showS . idType) vars
-        -- liftIO $ putStr "Arg type = "
-        -- liftIO $ print $ tys
         if length blockedFnsList > 0
           then do
             pure $ Just (ap, FnBlockedInArg (head blockedFnsList) rule)
@@ -279,28 +318,83 @@ isFunVar = isFunTy . dropForAlls . idType
 showOutputable :: (MonadIO m, Outputable a) => a -> m ()
 showOutputable = liftIO . putStr . showSDocUnsafe . ppr
 
--- Create GHC compilation error from LoggingError
-mkCompileError :: LogggingError -> (SrcSpan, OP.SDoc)
-mkCompileError err = (src_span err, OP.text $ err_msg err)
+-- Create GHC compilation error from CompileError
+mkGhcCompileError :: CompileError -> (SrcSpan, OP.SDoc)
+mkGhcCompileError err = (src_span err, OP.text $ err_msg err)
 
 -- Create Internal Representation of Logging Error
-mkLoggingError :: (LHsExpr GhcTc, Violation) -> TcM LogggingError
-mkLoggingError (expr, violation) = pure $ LogggingError "" "" (show violation) (getLoc expr) violation
+mkCompileError :: (LHsExpr GhcTc, Violation) -> TcM CompileError
+mkCompileError (expr, violation) = pure $ CompileError "" "" (show violation) (getLoc expr) violation
 
 -- Get Return type of the function application arg
-getArgType :: LHsExpr GhcTc -> [Type]
-getArgType (L _ (HsVar _ v)) = [idType $ unLoc v]
-getArgType (L _ (HsOverLit _ (OverLit (OverLitTc _ typ) v _))) = [typ]
-getArgType arg = 
-  let vars = filter (not . isSystemName . varName) $ arg ^? biplateRef
-      tys = (getReturnType . dropForAlls . idType) $ head vars
-  in tys
+getArgTypeWrapper :: LHsExpr GhcTc -> [Type]
+getArgTypeWrapper expr@(L _ (HsApp _ lfun rfun)) = getArgType expr True
+getArgTypeWrapper expr@(L _ (OpApp _ lfun op rfun)) = 
+  case showS op of
+    "($)" -> getArgType lfun True
+    "(.)" -> getArgTypeWrapper lfun
+    "(<>)" -> getArgTypeWrapper lfun
+    _ -> getArgType op True
+getArgTypeWrapper (L loc (HsWrap _ _ expr)) = getArgTypeWrapper (L loc expr)
+getArgTypeWrapper (L loc (HsPar _ expr)) = getArgTypeWrapper expr
+getArgTypeWrapper expr = getArgType expr False
+
+getArgType :: LHsExpr GhcTc -> Bool -> [Type]
+getArgType (L _ (HsLit _ v)) _ = getLitType v
+getArgType (L _ (HsOverLit _ (OverLit (OverLitTc _ typ) v _))) _ = [typ]
+getArgType (L loc (HsWrap _ _ expr)) shouldReturnFinalType = getArgType (L loc expr) shouldReturnFinalType
+getArgType arg shouldReturnFinalType = 
+  let vars = filter (not . isSystemName . varName) $ arg ^? biplateRef in 
+  if length vars == 0
+    then []
+  else
+    let tys = idType $ head vars 
+        (foralls, constraints, actualTyp) = tcSplitNestedSigmaTys tys
+        typeReturnFn = bool (\x -> [x]) getReturnType shouldReturnFinalType
+        actualReturnTyp = (trfUsingConstraints constraints $ typeReturnFn actualTyp)
+    in actualReturnTyp
+
+getLitType :: HsLit GhcTc -> [Type]
+getLitType (HsChar _ _	) = [charTy]
+getLitType (HsCharPrim _ _) = [charTy]
+getLitType (HsString _ _) = [stringTy]
+getLitType (HsStringPrim _ _) = [stringTy]
+getLitType (HsInt _ _) = [intTy]
+getLitType (HsIntPrim _ _) = [intTy]
+getLitType (HsWordPrim _ _) = [wordTy]
+getLitType (HsInt64Prim _ _) = [intTy]
+getLitType (HsWord64Prim _ _) = [wordTy]
+getLitType (HsInteger _ _ _) = [intTy]
+getLitType (HsRat _ _ _) = [doubleTy]
+getLitType (HsFloatPrim _ _) = [floatTy]
+getLitType (HsDoublePrim _ _) = [doubleTy]
+getLitType _ = []
 
 -- Get final return type of any type/function signature
 getReturnType :: Type -> [Type]
 getReturnType typ 
-  | isFunTy typ = getReturnType $ funResultTy typ
-  | otherwise = let (x, y) = splitAppTys typ in x : y
+  | isFunTy typ = getReturnType $ tcFunResultTy typ
+  | otherwise = let (x, y) = tcSplitAppTys typ in x : y
+
+trfUsingConstraints :: [PredType] -> [Type] -> [Type]
+trfUsingConstraints constraints typs =
+  let replacements = catMaybes $ map constraintsToReplacements constraints
+  -- in map (\typ -> ) typs
+  in map (replacer replacements) typs
+  where
+    constraintsToReplacements :: PredType -> Maybe (Type, Type)
+    constraintsToReplacements predTyp = case tcSplitTyConApp_maybe predTyp of
+      Just (tycon, [typ]) -> if showS tycon == "IsString"
+                              then Just (typ, stringTy)
+                              else Nothing
+      _ -> Nothing
+
+    replacer :: [(Type, Type)] -> Type -> Type
+    replacer replacements typ@(AppTy ty1 ty2) = AppTy (replacer replacements ty1) (replacer replacements ty2) 
+    replacer replacements typ@(TyConApp tyCon typOrKinds) = TyConApp tyCon $ map (replacer replacements) typOrKinds
+    replacer replacements typ@(ForAllTy bndrs typ') = ForAllTy bndrs (replacer replacements typ')
+    replacer replacements typ@(FunTy flag ty1 ty2) = FunTy flag (replacer replacements ty1) (replacer replacements ty2) 
+    replacer replacements typ = maybe typ snd $ (\x -> eqType (fst x) typ) `find` replacements 
 
 getStringificationFns :: LHsExpr GhcTc -> TcM [String] 
 getStringificationFns (L _ ap@(HsVar _ v)) = do
@@ -343,6 +437,14 @@ getBlockedFnsList arg rule =
   let vars = arg ^? biplateRef :: [Var]
       blockedFns = fns_blocked_in_arg rule
   in map getOccString $ filter (\x -> ((getOccString x) `elem` blockedFns) && (not . isSystemName . varName) x) vars
+
+addErrToFile :: ModSummary -> [CompileError] -> TcM ()
+addErrToFile modSummary errs = do
+  let path = "test/output/"
+      moduleName' = moduleNameString $ moduleName $ ms_mod modSummary
+      res = (encodePretty moduleName') <> (fromString ": ") <> encodePretty errs <> (fromString ",")
+  liftIO $ createDirectoryIfMissing True path
+  liftIO $ writeFile (path <> moduleName' <> "_compilationErrors.js") res
 
 -- Fdep plugin -------------------------------------------------------------------
 
