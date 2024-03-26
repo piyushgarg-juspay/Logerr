@@ -4,8 +4,8 @@ version:            0.1.0.0
 synopsis:           A plugin to throw error when a stringified object is being passed in text error
 license:            MIT
 license-file:       LICENSE
-author:             eswar2001
-maintainer:         teswar2001@gmail.com
+author:             piyushgarg-juspay
+maintainer:         piyushgarg1906@gmail.com
 category:           Development
 build-type:         Simple
 extra-doc-files:    CHANGELOG.md

@@ -129,7 +129,7 @@ badPracticeRules = [
   , logRule4 
   , logRule5 
   , logRule6
-  -- , showRule
+  , showRule
   ]
 
 logArgNo :: ArgNo
